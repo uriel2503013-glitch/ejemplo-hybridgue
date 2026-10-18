@@ -12,177 +12,50 @@ permissions:
   contents: read
 
 jobs:
-  build-test-publish:
+  build-test-package:
     name: Compilar, probar y empaquetar
     runs-on: windows-latest
 
     steps:
-      # Fuente: obtiene el codigo de la rama que inicio el workflow.
+      # Fuente: descarga el codigo del repositorio.
       - name: Fuente - checkout del repositorio
         uses: actions/checkout@v7
 
-      # Detecta la solucion, los proyectos y las pruebas para no fijar nombres ficticios.
-      - name: Detectar solucion, proyectos y version de .NET
-        id: detect
-        shell: pwsh
-        run: |
-          $root = $env:GITHUB_WORKSPACE.TrimEnd([char[]]@('\', '/'))
-          function Get-WorkspaceRelativePath([string]$path) {
-            $path.Substring($root.Length).TrimStart([char[]]@('\', '/')).Replace('\', '/')
-          }
-          $solutions = @(
-            Get-ChildItem -Path $root -Recurse -File -Include '*.sln', '*.slnx' |
-              Where-Object { $_.FullName -notmatch '[\\/](bin|obj)[\\/]' }
-          )
-          $projects = @(
-            Get-ChildItem -Path $root -Recurse -Filter '*.csproj' -File |
-              Where-Object { $_.FullName -notmatch '[\\/](bin|obj)[\\/]' }
-          )
-
-          if ($projects.Count -eq 0) {
-            throw 'No se encontraron proyectos .NET (.csproj). Agrega la solucion al repositorio para ejecutar este pipeline.'
-          }
-
-          if ($solutions.Count -gt 1) {
-            throw 'Se encontraron varias soluciones .sln/.slnx. Deja una solucion principal o ajusta el descubrimiento del workflow.'
-          }
-
-          $solutionPath = ''
-          if ($solutions.Count -eq 1) {
-            $solutionPath = Get-WorkspaceRelativePath $solutions[0].FullName
-          }
-
-          $testProjects = @()
-          $publishProjects = @()
-          $frameworks = @()
-
-          foreach ($project in $projects) {
-            [xml]$projectXml = Get-Content -LiteralPath $project.FullName -Raw
-            $projectText = $projectXml.OuterXml
-            $isTestProject = $project.Name -match '(?i)(test|tests)\.csproj$' -or
-              $projectText -match 'Microsoft\.NET\.Test\.Sdk|<IsTestProject>\s*true\s*</IsTestProject>'
-
-            if ($isTestProject) {
-              $testProjects += Get-WorkspaceRelativePath $project.FullName
-            }
-
-            $outputType = $projectXml.SelectNodes("//*[local-name()='OutputType']") |
-              ForEach-Object { $_.InnerText }
-            $sdkAttribute = $projectXml.Project.GetAttribute('Sdk')
-            if (-not $isTestProject -and ($outputType -contains 'Exe' -or $outputType -contains 'WinExe' -or $sdkAttribute -eq 'Microsoft.NET.Sdk.Web')) {
-              $publishProjects += Get-WorkspaceRelativePath $project.FullName
-            }
-
-            $frameworks += $projectXml.SelectNodes("//*[local-name()='TargetFramework' or local-name()='TargetFrameworks']") |
-              ForEach-Object { $_.InnerText -split ';' }
-          }
-
-          if ($testProjects.Count -eq 0) {
-            throw 'No se detectaron proyectos de pruebas. Agrega un proyecto de pruebas con Microsoft.NET.Test.Sdk o IsTestProject.'
-          }
-          if ($publishProjects.Count -eq 0) {
-            throw 'No se detecto un proyecto ejecutable o web para publicar.'
-          }
-
-          $globalJsonPath = Join-Path $root 'global.json'
-          if (Test-Path -LiteralPath $globalJsonPath) {
-            $sdkVersion = (Get-Content -LiteralPath $globalJsonPath -Raw | ConvertFrom-Json).sdk.version
-            if (-not $sdkVersion) {
-              throw 'global.json existe, pero no especifica sdk.version.'
-            }
-          } else {
-            $sdkFrameworks = @(
-              $frameworks |
-                ForEach-Object {
-                  if ($_ -match '^net(?:coreapp)?(?<version>\d+\.\d+)$') {
-                    [version]$Matches.version
-                  }
-                } |
-                Sort-Object -Descending
-            )
-            if ($sdkFrameworks.Count -gt 0) {
-              $sdkVersion = "$($sdkFrameworks[0].Major).$($sdkFrameworks[0].Minor).x"
-            } else {
-              $sdkVersion = '10.0.x'
-              Write-Host 'No se pudo inferir el SDK desde el framework; se usara .NET 10.'
-            }
-          }
-
-          "sdk-version=$sdkVersion" >> $env:GITHUB_OUTPUT
-          "solution-path=$solutionPath" >> $env:GITHUB_OUTPUT
-          "projects-json=$(@($projects | ForEach-Object { Get-WorkspaceRelativePath $_.FullName }) | ConvertTo-Json -Compress)" >> $env:GITHUB_OUTPUT
-          "test-projects-json=$($testProjects | ConvertTo-Json -Compress)" >> $env:GITHUB_OUTPUT
-          "publish-projects-json=$($publishProjects | ConvertTo-Json -Compress)" >> $env:GITHUB_OUTPUT
-          Write-Host "SDK detectado: $sdkVersion"
-          Write-Host "Solucion: $(if ($solutionPath) { $solutionPath } else { 'no se encontro .sln/.slnx; se usaran los proyectos' })"
-
-      - name: Configurar .NET y cachear dependencias
-        uses: actions/setup-dotnet@v6
+      # Build: configura Node.js con cache npm y verifica la sintaxis del programa.
+      - name: Build - configurar Node.js y cachear dependencias
+        uses: actions/setup-node@v7
         with:
-          dotnet-version: ${{ steps.detect.outputs.sdk-version }}
-          cache: true
-          cache-dependency-path: '**/*.csproj'
+          node-version: 24
+          cache: npm
 
-      # Build: restaura los paquetes y compila toda la solucion en Release.
-      - name: Build - restaurar y compilar en Release
-        shell: pwsh
-        env:
-          SOLUTION_PATH: ${{ steps.detect.outputs.solution-path }}
-          PROJECTS_JSON: ${{ steps.detect.outputs.projects-json }}
-        run: |
-          if ($env:SOLUTION_PATH) {
-            dotnet restore $env:SOLUTION_PATH
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            dotnet build $env:SOLUTION_PATH --configuration Release --no-restore
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          } else {
-            $projects = @($env:PROJECTS_JSON | ConvertFrom-Json)
-            foreach ($project in $projects) {
-              dotnet restore $project
-              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-              dotnet build $project --configuration Release --no-restore
-              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            }
-          }
+      - name: Build - instalar dependencias
+        run: npm ci
 
-      # Pruebas: ejecuta cada proyecto de pruebas detectado en Release.
+      - name: Build - comprobar sintaxis
+        run: npm run build
+
+      # Pruebas: ejecuta las pruebas unitarias con el test runner integrado de Node.js.
       - name: Pruebas - ejecutar pruebas unitarias
-        shell: pwsh
-        env:
-          TEST_PROJECTS_JSON: ${{ steps.detect.outputs.test-projects-json }}
-        run: |
-          $projects = @($env:TEST_PROJECTS_JSON | ConvertFrom-Json)
-          foreach ($project in $projects) {
-            dotnet test $project --configuration Release --no-build --no-restore
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
+        run: npm test
 
-      # Empaquetado: publica cada aplicacion y guarda los resultados como artefacto.
-      - name: Empaquetado - publicar aplicaciones
+      # Empaquetado: crea un ZIP de la aplicacion y lo publica como artefacto descargable.
+      - name: Empaquetado - crear paquete
         shell: pwsh
-        env:
-          PUBLISH_PROJECTS_JSON: ${{ steps.detect.outputs.publish-projects-json }}
         run: |
-          $projects = @($env:PUBLISH_PROJECTS_JSON | ConvertFrom-Json)
-          foreach ($project in $projects) {
-            $name = [System.IO.Path]::GetFileNameWithoutExtension($project)
-            $output = Join-Path $env:GITHUB_WORKSPACE "artifacts\$name"
-            dotnet publish $project --configuration Release --no-build --no-restore --output $output
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
+          New-Item -ItemType Directory -Path artifacts -Force | Out-Null
+          Compress-Archive -Path ejemplos.js, README.md, package.json, package-lock.json -DestinationPath artifacts/ejemplo-hybridgue.zip
 
       - name: Empaquetado - subir artefacto
         uses: actions/upload-artifact@v7
         with:
-          name: aplicacion-release
-          path: artifacts/**
+          name: ejemplo-hybridgue
+          path: artifacts/ejemplo-hybridgue.zip
           if-no-files-found: error
           retention-days: 14
 
-      # Despliegue: descomenta y configura el comando y los secretos al habilitar staging.
+      # Despliegue: paso preparado para agregar las credenciales y el comando de staging.
       # - name: Despliegue - publicar en staging
       #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      #   shell: pwsh
       #   env:
       #     STAGING_DEPLOY_TOKEN: ${{ secrets.STAGING_DEPLOY_TOKEN }}
-      #   run: ./scripts/deploy-staging.ps1 -PackagePath ./artifacts
+      #   run: npm run deploy:staging

@@ -46,19 +46,31 @@ function evaluar(n) {
   }
 }
 
-// ---------- Programa principal ----------
-// ((3 + 5) * (8 - 2))
-const raiz = new NodoBinario(
-  "*",
-  new NodoBinario("+", new NodoBinario(3), new NodoBinario(5)),
-  new NodoBinario("-", new NodoBinario(8), new NodoBinario(2))
-);
+module.exports = {
+  NodoBinario,
+  preorden,
+  inorden,
+  postorden,
+  altura,
+  contar,
+  contarHojas,
+  evaluar,
+};
 
-console.log("=== ARBOL BINARIO: EXPRESION ARITMETICA ===");
-console.log("Preorden  (prefija) :", preorden(raiz).join(" "));
-console.log("Inorden   (infija)  :", inorden(raiz).join(" "));
-console.log("Postorden (postfija):", postorden(raiz).join(" "));
-console.log("Altura :", altura(raiz));
-console.log("Nodos  :", contar(raiz));
-console.log("Hojas  :", contarHojas(raiz));
-console.log("Resultado de la expresion:", evaluar(raiz));
+if (require.main === module) {
+  // ((3 + 5) * (8 - 2))
+  const raiz = new NodoBinario(
+    "*",
+    new NodoBinario("+", new NodoBinario(3), new NodoBinario(5)),
+    new NodoBinario("-", new NodoBinario(8), new NodoBinario(2))
+  );
+
+  console.log("=== ARBOL BINARIO: EXPRESION ARITMETICA ===");
+  console.log("Preorden  (prefija) :", preorden(raiz).join(" "));
+  console.log("Inorden   (infija)  :", inorden(raiz).join(" "));
+  console.log("Postorden (postfija):", postorden(raiz).join(" "));
+  console.log("Altura :", altura(raiz));
+  console.log("Nodos  :", contar(raiz));
+  console.log("Hojas  :", contarHojas(raiz));
+  console.log("Resultado de la expresion:", evaluar(raiz));
+}

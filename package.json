@@ -1,0 +1,13 @@
+{
+  "name": "ejemplo-hybridgue",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Ejemplo de arbol binario y evaluacion de expresiones aritmeticas",
+  "scripts": {
+    "build": "node --check ejemplos.js && node --check tests/ejemplos.test.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
